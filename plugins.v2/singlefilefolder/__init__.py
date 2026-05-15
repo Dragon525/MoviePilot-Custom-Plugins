@@ -14,7 +14,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import settings
 from app.core.event import eventmanager, Event
@@ -78,34 +78,61 @@ class SingleFileFolder(_PluginBase):
     def get_api(self) -> List[Dict[str, Any]]:
         return []
 
-    def get_form(self) -> List[dict]:
-        """插件配置表单（V2 兼容简化格式）"""
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        """插件配置表单，返回 (页面 JSON, 默认模型字典)"""
         return [
             {
-                "component": "VSwitch",
-                "props": {
-                    "model": "enabled",
-                    "label": "启用插件",
-                    "description": "开启后自动监听并处理单文件种子"
-                }
-            },
-            {
-                "component": "VSwitch",
-                "props": {
-                    "model": "force_chinese",
-                    "label": "强制使用中文名",
-                    "description": "开启后，若识别不到中文标题则跳过该种子"
-                }
-            },
-            {
-                "component": "VAlert",
-                "props": {
-                    "type": "info",
-                    "variant": "tonal",
-                    "text": "仅处理单文件种子（只有一个视频文件）。自动创建电影名文件夹并移入文件，不影响多文件种子和做种。"
-                }
+                "component": "VForm",
+                "content": [
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {"model": "enabled", "label": "启用插件"},
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {"model": "force_chinese", "label": "强制使用中文名"},
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "content": [
+                                    {
+                                        "component": "VAlert",
+                                        "props": {
+                                            "type": "info",
+                                            "variant": "tonal",
+                                            "text": "仅处理单文件种子（只有一个视频文件）。自动创建电影名文件夹并移入文件，不影响多文件种子和做种。"
+                                        },
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                ],
             }
-        ]
+        ], {
+            "enabled": False,
+            "force_chinese": False,
+        }
 
     def get_page(self) -> List[dict]:
         """插件详情页面 - 展示处理历史"""
