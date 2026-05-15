@@ -7,13 +7,12 @@ MoviePilot v2 Plugin - SingleFileFolder
 - 定时检查已完成的下载任务
 - 对单文件种子：自动创建以电影中文名命名的文件夹，将文件移入
 - 同步更新 qBittorrent 种子的保存位置，不影响做种
-
-目录名必须为类名小写：singlefilefolder
-放置在 MoviePilot 的 app/plugins/singlefilefolder/__init__.py
 """
 
+import re
 import shutil
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,26 +30,32 @@ class SingleFileFolder(_PluginBase):
 
     # 插件元数据
     plugin_name = "单文件种子自动创建文件夹"
-    plugin_desc = "下载完成后自动为单文件种子创建以电影名命名的文件夹并移入文件"
+    plugin_desc = "自动为单文件种子创建以电影名命名的文件夹并移入文件，不影响多文件种子"
     plugin_version = "1.0.0"
     plugin_author = "AutoClaw"
     plugin_level = 1
-    plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/default.png"
+    plugin_icon = "FolderOpen"
     plugin_auth_level = 0
     plugin_order = 0
     plugin_history = {
-        "1.0.0": "初始版本，支持单文件种子自动创建文件夹"
+        "1.0.0": "初始版本，支持单文件种子自动创建文件夹，优先使用中文标题"
     }
 
     # 视频文件扩展名
-    _video_exts = {".mp4", ".mkv", ".avi", ".wmv", ".flv", ".ts", ".m2ts", ".iso", ".rmvb", ".mov", ".webm", ".mpg", ".mpeg", ".vob"}
+    _video_exts = {
+        ".mp4", ".mkv", ".avi", ".wmv", ".flv", ".ts",
+        ".m2ts", ".iso", ".rmvb", ".mov", ".webm",
+        ".mpg", ".mpeg", ".vob",
+    }
 
     def init_plugin(self, config: dict = None):
         self.config = config or {}
         self._enabled = self.config.get("enabled", False)
         self._force_chinese = self.config.get("force_chinese", False)
-        # 缓存已添加的下载 hash，避免重复处理
+        # 缓存已添加的下载 hash
         self._processed_hashes: set = set()
+        # 处理历史记录
+        self._process_history: list = []
 
         if self._enabled:
             logger.info("【SingleFileFolder】插件已启动，监听下载添加与转移完成事件")
@@ -58,9 +63,6 @@ class SingleFileFolder(_PluginBase):
     def get_state(self) -> bool:
         return self._enabled
 
-    # ------------------------------------------------------------------ #
-    # 插件 UI 配置
-    # ------------------------------------------------------------------ #
     def get_service(self) -> List[Dict[str, Any]]:
         """注册定时服务：每 30 秒轮询检查已完成下载"""
         if not self._enabled:
@@ -121,7 +123,7 @@ class SingleFileFolder(_PluginBase):
                                             "type": "info",
                                             "variant": "tonal",
                                             "text": (
-                                                "📌 仅处理单文件种子（种子内只有一个视频文件）。"
+                                                "仅处理单文件种子（种子内只有一个视频文件）。"
                                                 "下载完成后自动创建以电影名命名的文件夹并移入文件，"
                                                 "同时更新下载器保存路径，不影响做种。"
                                                 "多文件种子（已有文件夹结构）不做处理。"
@@ -137,14 +139,158 @@ class SingleFileFolder(_PluginBase):
         ]
 
     def get_page(self) -> List[dict]:
-        return []
+        """插件详情页面 - 展示处理历史"""
+        history_items = []
+        for item in self._process_history[-20:]:
+            icon = "✅" if item.get("success") else "❌"
+            history_items.append({
+                "component": "VListItem",
+                "props": {"density": "compact"},
+                "content": [
+                    {
+                        "component": "VListItemTitle",
+                        "content": [
+                            {"component": "span", "text": f"{icon} {item.get('time', '')} - {item.get('file', '')}"}
+                        ],
+                    },
+                    {
+                        "component": "VListItemSubtitle",
+                        "content": [
+                            {"component": "span", "text": f"→ {item.get('target', '') or item.get('reason', '')}"}
+                        ],
+                    },
+                ],
+            })
+
+        return [
+            {
+                "component": "VContainer",
+                "content": [
+                    # 插件信息卡片
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VCard",
+                                        "props": {"variant": "tonal"},
+                                        "content": [
+                                            {
+                                                "component": "VCardTitle",
+                                                "text": "插件信息",
+                                            },
+                                            {
+                                                "component": "VCardText",
+                                                "content": [
+                                                    {
+                                                        "component": "VRow",
+                                                        "content": [
+                                                            {
+                                                                "component": "VCol",
+                                                                "props": {"cols": 12, "md": 6},
+                                                                "content": [
+                                                                    {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": f"名称：{self.plugin_name}"}]},
+                                                                    {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": f"版本：{self.plugin_version}"}]},
+                                                                    {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": f"作者：{self.plugin_author}"}]},
+                                                                ],
+                                                            },
+                                                            {
+                                                                "component": "VCol",
+                                                                "props": {"cols": 12, "md": 6},
+                                                                "content": [
+                                                                    {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "轮询间隔：每 30 秒"}]},
+                                                                    {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": f"状态：{'运行中' if self._enabled else '已停止'}"}]},
+                                                                    {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": f"待处理种子：{len(self._processed_hashes)} 个"}]},
+                                                                ],
+                                                            },
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    # 处理记录卡片
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VCard",
+                                        "content": [
+                                            {
+                                                "component": "VCardTitle",
+                                                "text": "处理记录（最近 20 条）",
+                                            },
+                                            {
+                                                "component": "VCardText",
+                                                "content": history_items if history_items else [
+                                                    {
+                                                        "component": "VAlert",
+                                                        "props": {"type": "info", "variant": "tonal", "text": "暂无处理记录"},
+                                                    }
+                                                ],
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    # 使用说明卡片
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VCard",
+                                        "content": [
+                                            {
+                                                "component": "VCardTitle",
+                                                "text": "使用说明",
+                                            },
+                                            {
+                                                "component": "VCardText",
+                                                "content": [
+                                                    {
+                                                        "component": "VList",
+                                                        "content": [
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "1️⃣ 插件监听新添加的下载任务，等待下载完成"}]},
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "2️⃣ 每 30 秒轮询检查已完成的下载任务"}]},
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "3️⃣ 仅处理单文件种子（只有一个视频文件）"}]},
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "4️⃣ 自动创建以电影中文名命名的文件夹"}]},
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "5️⃣ 移动视频文件及附属文件（nfo、字幕、海报等）"}]},
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "6️⃣ 自动更新 qBittorrent 种子保存位置，不影响做种"}]},
+                                                            {"component": "VListItem", "content": [{"component": "VListItemTitle", "text": "📌 多文件种子（已有文件夹结构）不做处理"}]},
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ]
 
     def stop_service(self):
         self._processed_hashes.clear()
 
-    # ------------------------------------------------------------------ #
-    # 事件监听
-    # ------------------------------------------------------------------ #
     @eventmanager.register(EventType.DownloadAdded)
     def on_download_added(self, event: Event):
         """记录新添加的下载，等待下载完成后处理"""
@@ -158,29 +304,21 @@ class SingleFileFolder(_PluginBase):
 
     @eventmanager.register(EventType.TransferComplete)
     def on_transfer_complete(self, event: Event):
-        """
-        转移完成后也检查一次源目录
-        （某些情况下 TransferComplete 先触发，本插件作为兜底）
-        """
+        """转移完成后也检查一次源目录（兜底）"""
         if not self._enabled:
             return
         event_data = event.event_data or {}
         download_hash = event_data.get("download_hash")
         if download_hash:
             self._processed_hashes.add(download_hash)
-        # 触发一次检查
         self._check_completed_downloads()
 
-    # ------------------------------------------------------------------ #
-    # 核心逻辑
-    # ------------------------------------------------------------------ #
     def _check_completed_downloads(self):
         """定时任务：检查已完成的下载，处理单文件种子"""
         if not self._enabled or not self._processed_hashes:
             return
 
         try:
-            # 从下载器获取已完成的种子列表
             torrents = self.list_torrents(status=TorrentStatus.TRANSFER)
             if not torrents:
                 return
@@ -188,7 +326,6 @@ class SingleFileFolder(_PluginBase):
             logger.warning(f"【SingleFileFolder】获取下载列表失败: {e}")
             return
 
-        # 过滤出我们关注且尚未处理的种子
         pending = [t for t in torrents if t.hash and t.hash in self._processed_hashes]
         if not pending:
             return
@@ -201,44 +338,36 @@ class SingleFileFolder(_PluginBase):
                 logger.error(f"【SingleFileFolder】处理种子 {torrent.hash[:8]} 失败: {e}")
 
     def _process_torrent(self, torrent):
-        """
-        处理单个已完成下载任务
-        """
+        """处理单个已完成下载任务"""
         torrent_path: Path = torrent.path
         if not torrent_path or not torrent_path.exists():
             logger.debug(f"【SingleFileFolder】种子路径不存在: {torrent_path}")
             return
 
-        # 1. 判断是否为单文件
+        # 判断是否为单文件
         if torrent_path.is_file():
             if torrent_path.suffix.lower() not in self._video_exts:
-                logger.debug(f"【SingleFileFolder】非视频文件，跳过: {torrent_path.name}")
                 return
-            # 单文件种子：文件直接位于下载目录中
             video_file = torrent_path
             parent_dir = video_file.parent
         elif torrent_path.is_dir():
-            # 检查目录下是否只有一个视频文件（单文件种子）
             video_files = [
                 f for f in torrent_path.iterdir()
                 if f.is_file() and f.suffix.lower() in self._video_exts
             ]
             if len(video_files) != 1:
                 logger.debug(
-                    f"【SingleFileFolder】{torrent_path.name} 下有 {len(video_files)} 个视频文件，"
-                    f"判定为多文件种子或已整理，跳过"
+                    f"【SingleFileFolder】{torrent_path.name} 下有 {len(video_files)} 个视频文件，跳过"
                 )
                 return
             video_file = video_files[0]
             parent_dir = torrent_path
-            # 如果已经是合理的文件夹结构（文件夹名 ≈ 电影名），跳过
             if self._is_already_organized(parent_dir, video_file):
-                logger.debug(f"【SingleFileFolder】已整理，跳过: {torrent_path.name}")
                 return
         else:
             return
 
-        # 2. 获取文件夹名称
+        # 获取文件夹名称
         folder_name = self._get_folder_name(torrent, video_file)
         if not folder_name:
             logger.warning(f"【SingleFileFolder】无法确定文件夹名称，跳过: {video_file.name}")
@@ -249,7 +378,7 @@ class SingleFileFolder(_PluginBase):
             logger.info(f"【SingleFileFolder】目标文件夹已存在: {target_folder}，跳过")
             return
 
-        # 3. 创建文件夹并移动文件
+        # 创建文件夹并移动文件
         try:
             target_folder.mkdir(parents=True, exist_ok=True)
             logger.info(f"【SingleFileFolder】创建文件夹: {target_folder}")
@@ -258,7 +387,7 @@ class SingleFileFolder(_PluginBase):
             shutil.move(str(video_file), str(new_path))
             logger.info(f"【SingleFileFolder】移动文件: {video_file.name} -> {target_folder}/")
 
-            # 移动配套附属文件 (nfo, 字幕, 海报等)
+            # 移动配套附属文件
             for sibling in parent_dir.iterdir():
                 if sibling == video_file or sibling == target_folder:
                     continue
@@ -271,14 +400,21 @@ class SingleFileFolder(_PluginBase):
                     except Exception as e:
                         logger.warning(f"【SingleFileFolder】移动附属文件失败 {sibling.name}: {e}")
 
-            # 4. 更新下载器保存位置
+            # 更新下载器保存位置
             self._update_download_location(torrent.hash, str(target_folder))
 
             logger.info(f"【SingleFileFolder】✅ 整理完成: {video_file.name} -> {target_folder}")
 
+            # 记录处理历史
+            self._process_history.append({
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "file": video_file.name,
+                "target": str(target_folder),
+                "success": True,
+            })
+
         except Exception as e:
             logger.error(f"【SingleFileFolder】处理文件失败: {e}")
-            # 回滚
             if target_folder.exists() and not video_file.exists():
                 try:
                     shutil.move(str(target_folder / video_file.name), str(video_file))
@@ -289,12 +425,10 @@ class SingleFileFolder(_PluginBase):
 
     def _get_folder_name(self, torrent, video_file: Path) -> Optional[str]:
         """获取文件夹名称，优先使用中文标题"""
-        # 尝试通过下载历史获取媒体信息
         download_hash = getattr(torrent, "hash", None)
         if download_hash:
             downloadhis = self.downloadhis.get_by_hash(download_hash)
             if downloadhis:
-                # 通过 TMDBID 识别媒体信息
                 try:
                     mtype = MediaType(downloadhis.type)
                 except (ValueError, AttributeError):
@@ -323,31 +457,23 @@ class SingleFileFolder(_PluginBase):
         return self._clean_name(video_file.stem)
 
     def _update_download_location(self, torrent_hash: str, new_path: str):
-        """
-        通知下载器更新种子保存位置
-        """
+        """通知下载器更新种子保存位置"""
         try:
-            # 通过 chain 更新下载器中的种子位置
             self.run_module("set_torrents_save_path", hashs=[torrent_hash], save_path=new_path)
             logger.info(f"【SingleFileFolder】已通知下载器更新种子位置 -> {new_path}")
         except Exception as e:
-            logger.warning(f"【SingleFileFolder】更新下载器位置失败（可能需要手动设置位置）: {e}")
+            logger.warning(f"【SingleFileFolder】更新下载器位置失败: {e}")
 
     @staticmethod
     def _is_already_organized(parent_dir: Path, video_file: Path) -> bool:
-        """
-        判断目录是否已经是合理的整理结构
-        如果目录名与视频文件名主体一致（或包含关系），认为已整理
-        """
+        """判断目录是否已经是合理的整理结构"""
         dir_name = parent_dir.name.lower()
         file_stem = video_file.stem.lower()
-        # 目录名包含文件名核心部分，或文件名包含目录名
         return dir_name in file_stem or file_stem in dir_name
 
     @staticmethod
     def _clean_name(name: str) -> str:
         """清理文件夹名称，移除非法字符"""
-        import re
         name = re.sub(r'[\\/*?:"<>|\n\r\t]', "", name)
         name = name.strip(". ")
         if len(name) > 200:
