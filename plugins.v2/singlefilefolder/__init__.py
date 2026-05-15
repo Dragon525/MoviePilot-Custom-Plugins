@@ -31,7 +31,7 @@ class SingleFileFolder(_PluginBase):
     # 插件元数据
     plugin_name = "单文件种子自动创建文件夹"
     plugin_desc = "自动为单文件种子创建以电影名命名的文件夹并移入文件，不影响多文件种子"
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     plugin_author = "AutoClaw"
     plugin_level = 1
     plugin_icon = "FolderOpen"
